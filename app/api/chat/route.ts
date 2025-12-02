@@ -88,31 +88,19 @@ Be conversational, friendly, and guide them step-by-step through the navigation 
       fullPrompt += `User: ${messageText}\n\nAssistant:`
     }
 
-    // Use Hugging Face chat completion API
+    // Use Hugging Face text generation API
     // Using a good free model: meta-llama/Llama-3.1-8B-Instruct
-    const response = await hf.chatCompletion({
+    const response = await hf.textGeneration({
       model: 'meta-llama/Llama-3.1-8B-Instruct',
-      messages: [
-        {
-          role: 'system',
-          content: systemPrompt,
-        },
-        ...messages.map((msg: any) => ({
-          role: msg.role === 'assistant' ? 'assistant' : 'user',
-          content: msg.content,
-        })),
-        {
-          role: 'user',
-          content: image 
-            ? (messageText?.trim() ? `[Image provided] ${messageText}` : '[Image provided - analyze this image to identify the current location on BMCC campus]')
-            : messageText || '',
-        },
-      ],
-      max_tokens: 1000,
-      temperature: 0.7,
+      inputs: fullPrompt,
+      parameters: {
+        max_new_tokens: 1000,
+        temperature: 0.7,
+        return_full_text: false,
+      },
     })
 
-    const assistantMessage = response.choices[0]?.message?.content || 'Sorry, I could not generate a response.'
+    const assistantMessage = response.generated_text?.trim() || 'Sorry, I could not generate a response.'
 
     return NextResponse.json({ message: assistantMessage })
   } catch (error: any) {
