@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import OpenAI from 'openai'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
-})
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || '')
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,11 +11,11 @@ export async function POST(request: NextRequest) {
     const messagesJson = formData.get('messages') as string | null
 
     // Check if API key is configured
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.GOOGLE_AI_API_KEY) {
       return NextResponse.json(
         {
           message:
-            'OpenAI API key is not configured. Please set OPENAI_API_KEY in your environment variables.',
+            'Google AI API key is not configured. Please set GOOGLE_AI_API_KEY in your environment variables. Get a free key at https://aistudio.google.com/app/apikey',
         },
         { status: 200 }
       )
@@ -33,49 +31,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Build the user message content
-    const userContent: any[] = []
-
-    // Add image if provided
-    if (image) {
-      const bytes = await image.arrayBuffer()
-      const buffer = Buffer.from(bytes)
-      const base64Image = buffer.toString('base64')
-
-      userContent.push({
-        type: 'image_url',
-        image_url: {
-          url: `data:image/jpeg;base64,${base64Image}`,
-        },
-      })
-    }
-
-    // Add text if provided
-    if (messageText && messageText.trim()) {
-      userContent.push({
-        type: 'text',
-        text: messageText,
-      })
-    }
-
     // If no content, return error
-    if (userContent.length === 0) {
+    if (!messageText?.trim() && !image) {
       return NextResponse.json(
         { error: 'No message or image provided' },
         { status: 400 }
       )
     }
 
-    // Use GPT-4o for images, GPT-3.5-turbo for text only
-    const model = image ? 'gpt-4o' : 'gpt-3.5-turbo'
+    // Use Gemini model (supports both text and images)
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
 
-    // Use OpenAI to generate chat response
-    const response = await openai.chat.completions.create({
-      model: model,
-      messages: [
-        {
-          role: 'system',
-          content: `You are a helpful and friendly AI navigation assistant for BMCC (Borough of Manhattan Community College) campus. Your role is to guide students through the navigation process.
+    // Build the prompt with system instructions
+    const systemPrompt = `You are a helpful and friendly AI navigation assistant for BMCC (Borough of Manhattan Community College) campus. Your role is to guide students through the navigation process.
 
 IMPORTANT: Guide the conversation to collect:
 1. Current location (from text description or image analysis)
@@ -98,54 +66,79 @@ Common BMCC locations include:
 - Gymnasium
 - Auditorium
 
-Be conversational, friendly, and guide them step-by-step through the navigation process. Once you have both current location and destination, provide clear, step-by-step directions.`,
+Be conversational, friendly, and guide them step-by-step through the navigation process. Once you have both current location and destination, provide clear, step-by-step directions.`
+
+    // Build conversation history
+    let fullPrompt = systemPrompt + '\n\n'
+    
+    // Add conversation history
+    if (messages.length > 0) {
+      messages.forEach((msg: any) => {
+        if (msg.role === 'user') {
+          fullPrompt += `User: ${msg.content}\n\n`
+        } else if (msg.role === 'assistant') {
+          fullPrompt += `Assistant: ${msg.content}\n\n`
+        }
+      })
+    }
+
+    // Add current user message
+    if (messageText?.trim()) {
+      fullPrompt += `User: ${messageText}\n\nAssistant:`
+    } else {
+      fullPrompt += `User: [Image provided]\n\nAssistant:`
+    }
+
+    // Prepare content parts
+    const parts: any[] = [{ text: fullPrompt }]
+
+    // Add image if provided
+    if (image) {
+      const bytes = await image.arrayBuffer()
+      const buffer = Buffer.from(bytes)
+      const base64Image = buffer.toString('base64')
+      
+      parts.push({
+        inlineData: {
+          data: base64Image,
+          mimeType: image.type || 'image/jpeg',
         },
-        ...messages,
-        {
-          role: 'user',
-          content: userContent.length === 1 ? userContent[0] : userContent,
-        },
-      ],
-      max_tokens: 1000,
-      temperature: 0.7,
+      })
+    }
+
+    // Generate response
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts }],
+      generationConfig: {
+        maxOutputTokens: 1000,
+        temperature: 0.7,
+      },
     })
 
-    const assistantMessage =
-      response.choices[0]?.message?.content ||
-      'Sorry, I could not generate a response.'
+    const response = await result.response
+    const assistantMessage = response.text() || 'Sorry, I could not generate a response.'
 
     return NextResponse.json({ message: assistantMessage })
   } catch (error: any) {
     console.error('Error in chat API:', error)
 
     // Handle API key errors
-    if (error.message?.includes('API key') || error.status === 401) {
+    if (error.message?.includes('API key') || error.status === 401 || error.message?.includes('API_KEY_INVALID')) {
       return NextResponse.json(
         {
           message:
-            'OpenAI API key is not configured or invalid. Please check your environment variables in Vercel.',
+            'Google AI API key is not configured or invalid. Please check your environment variables in Vercel. Get a free key at https://aistudio.google.com/app/apikey',
         },
         { status: 200 }
       )
     }
 
-    // Handle quota/billing errors
-    if (error.status === 429 && error.code === 'insufficient_quota') {
+    // Handle quota/rate limit errors
+    if (error.status === 429 || error.message?.includes('quota') || error.message?.includes('rate limit')) {
       return NextResponse.json(
         {
           message:
-            '⚠️ Your OpenAI account has exceeded its quota. Please add credits at https://platform.openai.com/account/billing to continue using the AI features.',
-        },
-        { status: 200 }
-      )
-    }
-
-    // Handle rate limit errors
-    if (error.status === 429) {
-      return NextResponse.json(
-        {
-          message:
-            'Rate limit exceeded. Please wait a moment and try again.',
+            '⚠️ Rate limit exceeded. Please wait a moment and try again. Google AI has a generous free tier.',
         },
         { status: 200 }
       )
