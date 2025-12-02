@@ -119,20 +119,21 @@ Be conversational, friendly, and guide them step-by-step through the navigation 
     console.error('Error in chat API:', error)
 
     // Handle API key errors
-    if (error.message?.includes('API key')) {
+    if (error.message?.includes('API key') || error.status === 401) {
       return NextResponse.json(
         {
           message:
-            'OpenAI API key is not configured or invalid. Please check your environment variables.',
+            'OpenAI API key is not configured or invalid. Please check your environment variables in Vercel.',
         },
         { status: 200 }
       )
     }
 
+    // Provide more specific error message
+    const errorMessage = error.message || 'Unknown error'
     return NextResponse.json(
       {
-        message:
-          'Sorry, I encountered an error processing your request. Please try again.',
+        message: `Error: ${errorMessage}. Please check your API key and try again.`,
       },
       { status: 500 }
     )
