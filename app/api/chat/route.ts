@@ -129,11 +129,33 @@ Be conversational, friendly, and guide them step-by-step through the navigation 
       )
     }
 
+    // Handle quota/billing errors
+    if (error.status === 429 && error.code === 'insufficient_quota') {
+      return NextResponse.json(
+        {
+          message:
+            '⚠️ Your OpenAI account has exceeded its quota. Please add credits at https://platform.openai.com/account/billing to continue using the AI features.',
+        },
+        { status: 200 }
+      )
+    }
+
+    // Handle rate limit errors
+    if (error.status === 429) {
+      return NextResponse.json(
+        {
+          message:
+            'Rate limit exceeded. Please wait a moment and try again.',
+        },
+        { status: 200 }
+      )
+    }
+
     // Provide more specific error message
     const errorMessage = error.message || 'Unknown error'
     return NextResponse.json(
       {
-        message: `Error: ${errorMessage}. Please check your API key and try again.`,
+        message: `Error: ${errorMessage}. Please try again.`,
       },
       { status: 500 }
     )
