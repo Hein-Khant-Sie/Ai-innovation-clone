@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { HfInference } from '@huggingface/inference'
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || '')
+const hf = new HfInference(process.env.HUGGINGFACE_API_KEY || '')
 
 export async function POST(request: NextRequest) {
   try {
@@ -11,11 +11,11 @@ export async function POST(request: NextRequest) {
     const messagesJson = formData.get('messages') as string | null
 
     // Check if API key is configured
-    if (!process.env.GOOGLE_AI_API_KEY) {
+    if (!process.env.HUGGINGFACE_API_KEY) {
       return NextResponse.json(
         {
           message:
-            'Google AI API key is not configured. Please set GOOGLE_AI_API_KEY in your environment variables. Get a free key at https://aistudio.google.com/app/apikey',
+            'Hugging Face API key is not configured. Please set HUGGINGFACE_API_KEY in your environment variables. Get a free key at https://huggingface.co/settings/tokens',
         },
         { status: 200 }
       )
@@ -38,9 +38,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-
-    // Use Gemini model (supports both text and images)
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
 
     // Build the prompt with system instructions
     const systemPrompt = `You are a helpful and friendly AI navigation assistant for BMCC (Borough of Manhattan Community College) campus. Your role is to guide students through the navigation process.
@@ -83,62 +80,61 @@ Be conversational, friendly, and guide them step-by-step through the navigation 
     }
 
     // Add current user message
-    if (messageText?.trim()) {
+    if (image && messageText?.trim()) {
+      fullPrompt += `User: [Image provided] ${messageText}\n\nAssistant:`
+    } else if (image) {
+      fullPrompt += `User: [Image provided - analyze this image to identify the current location on BMCC campus]\n\nAssistant:`
+    } else if (messageText?.trim()) {
       fullPrompt += `User: ${messageText}\n\nAssistant:`
-    } else {
-      fullPrompt += `User: [Image provided]\n\nAssistant:`
     }
 
-    // Prepare content parts
-    const parts: any[] = [{ text: fullPrompt }]
-
-    // Add image if provided
-    if (image) {
-      const bytes = await image.arrayBuffer()
-      const buffer = Buffer.from(bytes)
-      const base64Image = buffer.toString('base64')
-      
-      parts.push({
-        inlineData: {
-          data: base64Image,
-          mimeType: image.type || 'image/jpeg',
+    // Use Hugging Face chat completion API
+    // Using a good free model: meta-llama/Llama-3.1-8B-Instruct
+    const response = await hf.chatCompletion({
+      model: 'meta-llama/Llama-3.1-8B-Instruct',
+      messages: [
+        {
+          role: 'system',
+          content: systemPrompt,
         },
-      })
-    }
-
-    // Generate response
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts }],
-      generationConfig: {
-        maxOutputTokens: 1000,
-        temperature: 0.7,
-      },
+        ...messages.map((msg: any) => ({
+          role: msg.role === 'assistant' ? 'assistant' : 'user',
+          content: msg.content,
+        })),
+        {
+          role: 'user',
+          content: image 
+            ? (messageText?.trim() ? `[Image provided] ${messageText}` : '[Image provided - analyze this image to identify the current location on BMCC campus]')
+            : messageText || '',
+        },
+      ],
+      max_tokens: 1000,
+      temperature: 0.7,
     })
 
-    const response = await result.response
-    const assistantMessage = response.text() || 'Sorry, I could not generate a response.'
+    const assistantMessage = response.choices[0]?.message?.content || 'Sorry, I could not generate a response.'
 
     return NextResponse.json({ message: assistantMessage })
   } catch (error: any) {
     console.error('Error in chat API:', error)
 
     // Handle API key errors
-    if (error.message?.includes('API key') || error.status === 401 || error.message?.includes('API_KEY_INVALID')) {
+    if (error.message?.includes('API key') || error.status === 401 || error.message?.includes('401') || error.message?.includes('Unauthorized')) {
       return NextResponse.json(
         {
           message:
-            'Google AI API key is not configured or invalid. Please check your environment variables in Vercel. Get a free key at https://aistudio.google.com/app/apikey',
+            'Hugging Face API key is not configured or invalid. Please check your environment variables in Vercel. Get a free key at https://huggingface.co/settings/tokens',
         },
         { status: 200 }
       )
     }
 
     // Handle quota/rate limit errors
-    if (error.status === 429 || error.message?.includes('quota') || error.message?.includes('rate limit')) {
+    if (error.status === 429 || error.message?.includes('quota') || error.message?.includes('rate limit') || error.message?.includes('429')) {
       return NextResponse.json(
         {
           message:
-            '⚠️ Rate limit exceeded. Please wait a moment and try again. Google AI has a generous free tier.',
+            '⚠️ Rate limit exceeded. Please wait a moment and try again. Hugging Face has a generous free tier.',
         },
         { status: 200 }
       )
