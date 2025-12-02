@@ -6,8 +6,11 @@ const openai = new OpenAI({
 })
 
 export async function POST(request: NextRequest) {
+  let text: string = ''
+  
   try {
-    const { text } = await request.json()
+    const body = await request.json()
+    text = body.text
 
     if (!text || typeof text !== 'string') {
       return NextResponse.json(
@@ -62,7 +65,7 @@ export async function POST(request: NextRequest) {
     console.error('Error parsing location:', error)
     
     // Fallback if API key is not set - use simple text normalization
-    if (error.message?.includes('API key')) {
+    if (error.message?.includes('API key') && text) {
       // Simple fallback normalization
       const normalized = text
         .toLowerCase()
